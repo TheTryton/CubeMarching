@@ -1,0 +1,94 @@
+﻿#pragma kernel March2D
+
+static const int v00 = 0;
+static const int v10 = 1;
+static const int v01 = 2;
+static const int v11 = 3;
+
+static const int v50 = 4;
+static const int v05 = 5;
+static const int v51 = 6;
+static const int v15 = 7;
+
+static int triangulationIndices[16][12] =
+{
+    {-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1},
+    {v00, v50, v05,-1,-1,-1,-1,-1,-1,-1,-1,-1},
+    {v10, v15, v50,-1,-1,-1,-1,-1,-1,-1,-1,-1},
+    {v00, v10, v15, v00, v15, v05,-1,-1,-1,-1,-1,-1},
+
+    {v51, v15, v11,-1,-1,-1,-1,-1,-1,-1,-1,-1},
+    {v00, v50, v05, v05, v50, v51, v50, v15, v51, v51, v15, v11},
+    {v50, v10, v11, v50, v11, v51,-1,-1,-1,-1,-1,-1},
+    {v00, v10, v05, v05, v10, v51, v51, v10, v11,-1,-1,-1},
+
+    {v01, v05, v51,-1,-1,-1,-1,-1,-1,-1,-1,-1},
+    {v00, v51, v01, v00, v50, v51,-1,-1,-1,-1,-1,-1},
+    {v01, v05, v51, v05, v50, v51, v51, v50, v15, v15, v50, v10},
+    {v00, v51, v01, v00, v15, v51, v00, v10, v15,-1,-1,-1},
+
+    {v01, v05, v11, v05, v15, v11,-1,-1,-1,-1,-1,-1},
+    {v00, v50, v01, v01, v50, v15, v01, v15, v11,-1,-1,-1},
+    {v01, v05, v11, v05, v50, v11, v50, v10, v11,-1,-1,-1},
+    {v00, v11, v01, v00, v10, v11,-1,-1,-1,-1,-1,-1}
+};
+
+static const int numThreads = 8;
+
+int PatchSizeX;
+int PatchSizeY;
+
+float threshold;
+
+struct Triangle {
+    float2 v1;
+    float2 v2;
+    float2 v3;
+};
+
+AppendStructuredBuffer<Triangle> triangles;
+RWStructuredBuffer<float> points;
+
+int indexFromCoord(int x, int y)
+{
+    return x * PatchSizeY + y;
+}
+
+[numthreads(numThreads, numThreads, 1)]
+void March2D(int3 id : SV_DispatchThreadID)
+{
+    if (id.x < 1 || id.y < 1 || id.x >= PatchSizeX || id.y >= PatchSizeY)
+    {
+        return;
+    }
+
+    int squareIndex = 0;
+    if (points[indexFromCoord(id.x - 1, id.y - 1)] > threshold) squareIndex |= 1;
+    if (points[indexFromCoord(id.x, id.y - 1)] > threshold)squareIndex |= 2;
+    if (points[indexFromCoord(id.x, id.y)] > threshold)squareIndex |= 4;
+    if (points[indexFromCoord(id.x - 1, id.y)] > threshold)squareIndex |= 8;
+
+    float2 pointPositions[8] = 
+    {
+        float2(id.x - 1,id.y - 1),
+        float2(id.x,id.y - 1),
+        float2(id.x - 1,id.y),
+        float2(id.x,id.y),
+
+        float2(id.x - 0.5f,id.y - 1),
+        float2(id.x - 1,id.y - 0.5f),
+        float2(id.x - 0.5f,id.y),
+        float2(id.x,id.y - 0.5f),
+    };
+
+    for (int i = 0; triangulationIndices[squareIndex][i] != -1 && i < 12; i += 3)
+    {
+        Triangle tri;
+
+        tri.v1 = pointPositions[triangulationIndices[squareIndex][i]];
+        tri.v2 = pointPositions[triangulationIndices[squareIndex][i + 1]];
+        tri.v3 = pointPositions[triangulationIndices[squareIndex][i + 2]];
+
+        triangles.Append(tri);
+    }
+}

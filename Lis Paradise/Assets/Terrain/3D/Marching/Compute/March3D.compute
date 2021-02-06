@@ -1,0 +1,150 @@
+﻿#pragma kernel March3D
+
+#include "/March3DData.compute"
+
+AppendStructuredBuffer<Triangle> outTriangles;
+RWStructuredBuffer<float> inSolidnessDataPoints;
+RWStructuredBuffer<float> inTextureCoeffDataPoints;
+
+int VoxelsSizeX;
+int VoxelsSizeY;
+int VoxelsSizeZ;
+
+int DataPointsSizeX;
+int DataPointsSizeY;
+int DataPointsSizeZ;
+
+float SolidnessThreshold;
+
+float3 interpolateVertices(float3 v1, float3 v2, float p1, float p2) {
+    float t = (SolidnessThreshold - p1) / (p2 - p1);
+    return v1 + t * (v2 - v1);
+}
+
+float interpolateVerticesVals(float v1, float v2, float p1, float p2) {
+    float t = (SolidnessThreshold - p1) / (p2 - p1);
+    return v1 + t * (v2 - v1);
+}
+
+int indexFromCoord(int x, int y, int z) {
+    return z * DataPointsSizeY * DataPointsSizeX + y * DataPointsSizeX + x;
+}
+
+int edgesOnXAxis()
+{
+    return (DataPointsSizeX - 1) * DataPointsSizeY * DataPointsSizeZ;
+}
+
+int edgesOnYAxis()
+{
+    return DataPointsSizeX * (DataPointsSizeY - 1) * DataPointsSizeZ;
+}
+
+int edgesOnZAxis()
+{
+    return DataPointsSizeX * DataPointsSizeY * (DataPointsSizeZ - 1);
+}
+
+int xAxisEdgeIndex(int x, int y, int z)
+{
+    return x + y * (DataPointsSizeX - 1) + z * (DataPointsSizeX - 1) * DataPointsSizeY;
+}
+
+int yAxisEdgeIndex(int x, int y, int z)
+{
+    return y + x * (DataPointsSizeY - 1) + z * (DataPointsSizeY - 1) * DataPointsSizeX + edgesOnXAxis();
+}
+
+int zAxisEdgeIndex(int x, int y, int z)
+{
+    return z + x * (DataPointsSizeZ - 1) + y * (DataPointsSizeZ - 1) * DataPointsSizeX + edgesOnXAxis() + edgesOnYAxis();
+}
+
+int edgeVertexIndex(int edgeIndex, int x_cube, int y_cube, int z_cube)
+{
+    if (edgeIndex % 2 == 0 && edgeIndex < 8)
+    {
+        int x_edge = x_cube;
+        int y_edge = y_cube;
+        int z_edge = z_cube;
+
+        y_edge += edgeXAxisIndexShift[(edgeIndex + 1) / 2][0];
+        z_edge += edgeXAxisIndexShift[(edgeIndex + 1) / 2][1];
+
+        return xAxisEdgeIndex(x_edge, y_edge, z_edge);
+    }
+
+    if (edgeIndex % 2 == 1 && edgeIndex < 8)
+    {
+        int x_edge = x_cube;
+        int y_edge = y_cube;
+        int z_edge = z_cube;
+
+        x_edge += edgeZAxisIndexShift[(edgeIndex + 1) / 2][0];
+        y_edge += edgeZAxisIndexShift[(edgeIndex + 1) / 2][1];
+
+        return zAxisEdgeIndex(x_edge, y_edge, z_edge);
+    }
+
+    if (edgeIndex >= 8)
+    {
+        int x_edge = x_cube;
+        int y_edge = y_cube;
+        int z_edge = z_cube;
+
+        x_edge += edgeYAxisIndexShift[edgeIndex - 8][0];
+        z_edge += edgeYAxisIndexShift[edgeIndex - 8][1];
+
+        return yAxisEdgeIndex(x_edge, y_edge, z_edge);
+    }
+}
+
+[numthreads(8, 8, 8)]
+void March3D(int3 id : SV_DispatchThreadID)
+{
+    if (id.x >= VoxelsSizeX || id.y >= VoxelsSizeY || id.z >= VoxelsSizeZ) {
+        return;
+    }
+
+    float3 cubeVertices[8];
+    float cubeSolidness[8];
+    float cubeTextureCoeff[8];
+
+    int cubeIndex = 0;
+
+    for (int i = 0; i < 8; i++)
+    {
+        cubeVertices[i] = float3(id.x + vertexIndices[i][0], id.y + vertexIndices[i][1], id.z + vertexIndices[i][2]);
+        cubeSolidness[i] = inSolidnessDataPoints[indexFromCoord(id.x + vertexIndices[i][0], id.y + vertexIndices[i][1], id.z + vertexIndices[i][2])];
+        cubeTextureCoeff[i] = inTextureCoeffDataPoints[indexFromCoord(id.x + vertexIndices[i][0], id.y + vertexIndices[i][1], id.z + vertexIndices[i][2])];
+
+        if (cubeSolidness[i] < SolidnessThreshold)
+        {
+            cubeIndex |= (1 << i);
+        }
+    }
+
+    for (int ti = 0; triangulationTable[cubeIndex][ti] != -1; ti += 3) {
+
+        int a0 = edgeVertexIndices[triangulationTable[cubeIndex][ti]][0];
+        int b0 = edgeVertexIndices[triangulationTable[cubeIndex][ti]][1];
+
+        int a1 = edgeVertexIndices[triangulationTable[cubeIndex][ti + 1]][0];
+        int b1 = edgeVertexIndices[triangulationTable[cubeIndex][ti + 1]][1];
+
+        int a2 = edgeVertexIndices[triangulationTable[cubeIndex][ti + 2]][0];
+        int b2 = edgeVertexIndices[triangulationTable[cubeIndex][ti + 2]][1];
+
+        Triangle tri;
+
+        tri.v1 = interpolateVertices(cubeVertices[a0], cubeVertices[b0], cubeSolidness[a0], cubeSolidness[b0]);
+        tri.v2 = interpolateVertices(cubeVertices[a1], cubeVertices[b1], cubeSolidness[a1], cubeSolidness[b1]);
+        tri.v3 = interpolateVertices(cubeVertices[a2], cubeVertices[b2], cubeSolidness[a2], cubeSolidness[b2]);
+
+        tri.c1 = interpolateVerticesVals(cubeTextureCoeff[a0], cubeTextureCoeff[b0], cubeSolidness[a0], cubeSolidness[b0]);
+        tri.c2 = interpolateVerticesVals(cubeTextureCoeff[a1], cubeTextureCoeff[b1], cubeSolidness[a1], cubeSolidness[b1]);
+        tri.c3 = interpolateVerticesVals(cubeTextureCoeff[a2], cubeTextureCoeff[b2], cubeSolidness[a2], cubeSolidness[b2]);
+
+        outTriangles.Append(tri);
+    }
+}

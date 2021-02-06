@@ -1,0 +1,30 @@
+﻿#pragma kernel TransformTrianglesToMesh
+
+#include "/March3DData.compute"
+
+RWStructuredBuffer<Triangle> inTriangles;
+int inTrianglesCount;
+RWStructuredBuffer<float3> outVertices;
+RWStructuredBuffer<int> outIndices;
+RWStructuredBuffer<float2> outUvs;
+
+[numthreads(8,1,1)]
+void TransformTrianglesToMesh(int3 id : SV_DispatchThreadID)
+{
+    if (id.x >= inTrianglesCount)
+    {
+        return;
+    }
+
+    outVertices[id.x * 3] = inTriangles[id.x].v1;
+    outVertices[id.x * 3 + 1] = inTriangles[id.x].v2;
+    outVertices[id.x * 3 + 2] = inTriangles[id.x].v3;
+
+    outUvs[id.x * 3] = float2(inTriangles[id.x].c1, 0.0f);
+    outUvs[id.x * 3 + 1] = float2(inTriangles[id.x].c2, 0.0f);
+    outUvs[id.x * 3 + 2] = float2(inTriangles[id.x].c3, 0.0f);
+
+    outIndices[id.x * 3] = id.x * 3;
+    outIndices[id.x * 3 + 1] = id.x * 3 + 1;
+    outIndices[id.x * 3 + 2] = id.x * 3 + 2;
+}
